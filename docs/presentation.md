@@ -44,7 +44,7 @@ style: |
   }
   code {
     background: #1e1e2e;
-    color: #a78bfa;
+    color: #fb923c;
     padding: 1px 6px;
     border-radius: 4px;
     font-size: 0.85em;
@@ -63,6 +63,11 @@ style: |
     padding: 0;
     line-height: 1.55;
   }
+  .hl-orange { color: #fb923c !important; }
+  .hl-yellow { color: #fbbf24 !important; }
+  .hl-red    { color: #f87171 !important; }
+  .hl-dim    { color: #64748b !important; }
+  .hl-white  { color: #ffffff !important; font-weight: bold; }
   strong {
     color: #ffffff;
   }
@@ -162,11 +167,10 @@ style: |
 
 에이전트의 **추측 하나**는 작아 보입니다. 하지만 그 추측 위에 또 추측이 쌓이면 —
 
-```
-"아마 여기가 원인" → auth.py 수정
-  → "이제 될 것 같음" → 테스트 없이 커밋
-    → "배포해도 괜찮을 것 같음" → 프로덕션 반영
-```
+<pre><code><span style="color:#fb923c">"아마 여기가 원인"</span> → auth.py 수정
+  → <span style="color:#fb923c">"이제 될 것 같음"</span> → 테스트 없이 커밋
+    → <span style="color:#fb923c">"배포해도 괜찮을 것 같음"</span> → 프로덕션 반영
+</code></pre>
 
 <br>
 
@@ -187,9 +191,9 @@ style: |
 
 | 유형 | 예시 | 점수 |
 |------|------|:----:|
-| 약한 추측 | "might", "어쩌면" | +5 |
-| 강한 추측 | "I think", "아마" | +10 |
-| 근거 없는 확신 | "this will fix" | +20 |
+| 약한 추측 | <span style="color:#fb923c">"might"</span>, <span style="color:#fb923c">"어쩌면"</span> | +5 |
+| 강한 추측 | <span style="color:#fb923c">"I think"</span>, <span style="color:#fb923c">"아마"</span> | +10 |
+| 근거 없는 확신 | <span style="color:#fb923c">"this will fix"</span> | +20 |
 | 테스트 없는 파일 수정 | Edit without test | +20 |
 | 고위험 파일 수정 | auth, secret, .env | +25 |
 | 파괴적 명령 실행 | `rm -rf`, `git push origin main --force` | **BLOCK** |
@@ -198,22 +202,21 @@ style: |
 
 # 어떻게 동작하나요? — 감지
 
-```bash
-$ debt watch --file examples/demo_oauth/session_demo.json
+<pre><code>$ debt watch --file examples/demo_oauth/session_demo.json
 
-  세션 ID: dc66f9b4 | 이벤트: 3개
+  <span class="hl-dim">세션 ID: dc66f9b4 | 이벤트: 3개</span>
 
-  ◑ HEDGE_STRONG   "OAuth callback redirect loop는 middleware 설정 문제 같습니다"
-                   점수 +10  ID edc-8c621d
-  ◑ HEDGE_STRONG   "아마 express-session의 cookie sameSite 속성이 원인인 것 같습니다"
-                   점수 +10  ID edc-e5b851
-  ● EDIT_NO_TEST   테스트 실행 없이 파일 수정: src/middleware/auth.js
-                   점수 +20  ID edc-1804a6
-  ● HIGH_RISK_FILE 고위험 파일 접근: src/middleware/auth.js
-                   점수 +25  ID edc-23daa6
+  <span class="hl-yellow">◑ HEDGE_STRONG</span>   <span>"OAuth callback redirect loop는 middleware 설정 문제 같습니다"</span>
+                   <span class="hl-dim">점수 +10  ID edc-8c621d</span>
+  <span class="hl-yellow">◑ HEDGE_STRONG</span>   <span>"아마 express-session의 cookie sameSite 속성이 원인인 것 같습니다"</span>
+                   <span class="hl-dim">점수 +10  ID edc-e5b851</span>
+  <span class="hl-red">● EDIT_NO_TEST</span>   테스트 실행 없이 파일 수정: src/middleware/auth.js
+                   <span class="hl-dim">점수 +20  ID edc-1804a6</span>
+  <span class="hl-red">● HIGH_RISK_FILE</span> 고위험 파일 접근: src/middleware/auth.js
+                   <span class="hl-dim">점수 +25  ID edc-23daa6</span>
 
-  총 인지부채 4건  (score: 65)
-```
+  <span class="hl-white">총 인지부채 4건</span>  <span class="hl-red">(score: 65)</span>
+</code></pre>
 
 ---
 
@@ -226,21 +229,19 @@ $ debt judge
   추정 표현 + 고위험 파일 동시 발생
 ```
 
-```bash
-$ debt repay edc-1804a6 --code "src/middleware/auth.js:42"
+<pre><code>$ debt repay edc-1804a6 --code <span class="hl-orange">"src/middleware/auth.js:42"</span>
   ✓ 인지부채 해소됨  edc-1804a6  점수 감소 -10  현재 점수 55
 
-$ debt repay edc-8c621d --doc "express-session docs: sameSite cookie fix"
+$ debt repay edc-8c621d --doc <span class="hl-orange">"express-session docs: sameSite cookie fix"</span>
   ✓ 인지부채 해소됨  edc-8c621d  점수 감소 -8   현재 점수 47
 
-$ debt repay edc-e5b851 --doc "express-session docs: sameSite=strict 설정 확인"
+$ debt repay edc-e5b851 --doc <span class="hl-orange">"express-session docs: sameSite=strict 설정 확인"</span>
   ✓ 인지부채 해소됨  edc-e5b851  점수 감소 -8   현재 점수 39
 
-$ debt repay edc-23daa6 --manual "auth.js 직접 코드 리뷰 완료"
+$ debt repay edc-23daa6 --manual <span class="hl-orange">"auth.js 직접 코드 리뷰 완료"</span>
   ✓ 인지부채 해소됨  edc-23daa6  점수 감소 -5   현재 점수 34
-```
+</code></pre>
 
-증거 없이는 에이전트가 앞으로 나아갈 수 없습니다.
 
 ---
 
