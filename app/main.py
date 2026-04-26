@@ -665,29 +665,34 @@ def judge(
     session = registry.current_session()
 
     if not session:
-        if not strict:
+        if strict:
+            # hook 모드: 세션이 없으면 자동 생성 후 계속 진행
+            session = registry.create_session(str(Path.cwd()))
+        else:
             fmt.info("세션 없음. 판정 불가.")
-        raise typer.Exit(2)
+            raise typer.Exit(2)
 
     # hook에서 --tool 플래그로 실시간 액션 전달 시 즉시 분석
     # stdin에 Claude Code가 보낸 JSON이 있으면 command/target 자동 추출
+    # $TOOL_NAME 미설정 대비: stdin JSON의 tool_name도 확인
+    if not sys.stdin.isatty():
+        try:
+            payload = json.loads(sys.stdin.read())
+            if not tool:
+                tool = payload.get("tool_name", "")
+            tool_input = payload.get("tool_input", {})
+            if not command:
+                command = tool_input.get("command", "")
+            if not target:
+                target = tool_input.get("path", "") or tool_input.get("file_path", "")
+        except (json.JSONDecodeError, OSError):
+            pass
+
     if tool:
-        resolved_command = command or ""
-        resolved_target  = target  or ""
-
-        if not resolved_command and not resolved_target and not sys.stdin.isatty():
-            try:
-                payload = json.loads(sys.stdin.read())
-                tool_input = payload.get("tool_input", {})
-                resolved_command = tool_input.get("command", "")
-                resolved_target  = tool_input.get("path", "") or tool_input.get("file_path", "")
-            except (json.JSONDecodeError, OSError):
-                pass
-
         engine.process_action(
             tool=tool,
-            target=resolved_target,
-            command=resolved_command,
+            target=target or "",
+            command=command or "",
             session=session,
         )
 
@@ -764,9 +769,25 @@ def dashboard(
         raise typer.Exit(1)
 
     # 대시보드 스크립트 실행
-    script_path = Path(__file__).parent.parent / "debt-dashboard.sh"
+    # 우선순위: 환경변수 > .edc/config.json > 소스 기준 상대경로
+    script_path: Optional[Path] = None
+    if env_path := os.environ.get("DEBT_DASHBOARD_SCRIPT"):
+        script_path = Path(env_path)
+    else:
+        config_file = EDC_DIR / "config.json"
+        if config_file.exists():
+            import json as _json
+            _cfg = _json.loads(config_file.read_text())
+            if cfg_path := _cfg.get("dashboard_script"):
+                script_path = Path(cfg_path)
+    if script_path is None:
+        script_path = Path(__file__).parent.parent / "debt-dashboard.sh"
     if not script_path.exists():
-        fmt.error("대시보드 스크립트를 찾을 수 없습니다.")
+        fmt.error(
+            f"대시보드 스크립트를 찾을 수 없습니다: {script_path}\n"
+            "  힌트: .edc/config.json에 'dashboard_script' 경로를 지정하거나\n"
+            "        DEBT_DASHBOARD_SCRIPT 환경변수를 설정하세요."
+        )
         raise typer.Exit(1)
 
     console.print(f"\n  [bold blue]대시보드 실행 중...[/bold blue] [dim]파일: {target_file}[/dim]\n")
