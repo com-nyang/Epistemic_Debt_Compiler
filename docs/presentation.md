@@ -192,7 +192,7 @@ style: |
 | 근거 없는 확신 | "this will fix" | +20 |
 | 테스트 없는 파일 수정 | Edit without test | +20 |
 | 고위험 파일 수정 | auth, secret, .env | +25 |
-| 파괴적 명령 실행 | `rm -rf`, `DROP TABLE` | **BLOCK** |
+| 파괴적 명령 실행 | `rm -rf`, `git push origin main --force` | **BLOCK** |
 
 ---
 
