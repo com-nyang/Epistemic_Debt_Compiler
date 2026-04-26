@@ -1,0 +1,17 @@
+[project]
+name = "epistemic-debt-compiler"
+version = "0.1.0"
+description = "근거 없는 에이전트 행동을 추적하고 차단하는 CLI 게이트키퍼"
+requires-python = ">=3.11"
+dependencies = [
+    "typer>=0.12",
+    "rich>=13",
+    "pydantic>=2",
+]
+
+[project.scripts]
+debt = "app.main:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

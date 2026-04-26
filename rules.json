@@ -1,0 +1,158 @@
+{
+  "version": "0.1",
+  "thresholds": {
+    "allow": 20,
+    "evidence_required": 40,
+    "approval_required": 70
+  },
+  "debt_events": [
+    {
+      "id": "HEDGE_WEAK",
+      "type": "text",
+      "patterns": {
+        "en": ["\\bmight\\b", "\\bcould be\\b", "\\bperhaps\\b", "\\bmaybe\\b", "\\bpossibly\\b"],
+        "ko": ["일 수 있", "어쩌면", "혹시"]
+      },
+      "score": 5,
+      "risk_level": "LOW",
+      "force_verdict": null
+    },
+    {
+      "id": "HEDGE_STRONG",
+      "type": "text",
+      "patterns": {
+        "en": ["I think", "probably", "seems like", "I believe", "\\blikely\\b", "I suspect"],
+        "ko": ["것 같", "아마", "인 듯", "보입니다", "같습니다", "것으로 보"]
+      },
+      "score": 10,
+      "risk_level": "MEDIUM",
+      "force_verdict": null
+    },
+    {
+      "id": "ASSUME_FACT",
+      "type": "text",
+      "patterns": {
+        "en": ["the root cause is", "this is definitely", "must be the", "the bug is in", "the issue is in"],
+        "ko": ["이게 원인", "확실히", "원인은", "여기가 문제", "이 함수가 원인"]
+      },
+      "score": 15,
+      "risk_level": "MEDIUM",
+      "force_verdict": null
+    },
+    {
+      "id": "CLAIM_TEST_PASS",
+      "type": "text",
+      "patterns": {
+        "en": ["should work now", "should pass", "this will fix", "should be fine", "should be working", "this fixes"],
+        "ko": ["잘 될 것", "동작할 것", "통과할 것", "해결될 것", "작동할 것", "고쳐질 것"]
+      },
+      "score": 20,
+      "risk_level": "HIGH",
+      "force_verdict": null
+    },
+    {
+      "id": "EDIT_NO_TEST",
+      "type": "action",
+      "trigger": ["Edit", "Write"],
+      "condition": "no_test_run_in_session",
+      "score": 20,
+      "risk_level": "HIGH",
+      "force_verdict": null,
+      "risk_patterns": [],
+      "destructive_patterns": []
+    },
+    {
+      "id": "HIGH_RISK_FILE",
+      "type": "action",
+      "trigger": ["Edit", "Write"],
+      "condition": "target_matches_risk_patterns",
+      "score": 25,
+      "risk_level": "HIGH",
+      "force_verdict": null,
+      "risk_patterns": [
+        "auth", "login", "token", "credential", "password", "secret",
+        "migration", "schema", "\\.env", "config", "settings",
+        "payment", "billing", "deploy", "dockerfile"
+      ],
+      "destructive_patterns": []
+    },
+    {
+      "id": "DESTRUCTIVE_CMD",
+      "type": "action",
+      "trigger": ["Bash"],
+      "condition": "command_matches_destructive_patterns",
+      "score": 30,
+      "risk_level": "HIGH",
+      "force_verdict": "BLOCK",
+      "risk_patterns": [],
+      "destructive_patterns": [
+        "rm -rf", "DROP TABLE", "DROP DATABASE",
+        "git reset --hard", "git clean -f",
+        "truncate", "DELETE FROM"
+      ]
+    },
+    {
+      "id": "RETRY_SAME_FIX",
+      "type": "action",
+      "trigger": ["Edit", "Write"],
+      "condition": "same_file_count_gte_3",
+      "score": 15,
+      "risk_level": "MEDIUM",
+      "force_verdict": null,
+      "risk_patterns": [],
+      "destructive_patterns": []
+    }
+  ],
+  "repay_events": [
+    {
+      "id": "TEST_PASS",
+      "type": "test",
+      "score_reduction": 25,
+      "description": "테스트 스위트 통과"
+    },
+    {
+      "id": "REPRO_FAIL",
+      "type": "test",
+      "score_reduction": 20,
+      "description": "버그 재현 성공 (failing test 작성)"
+    },
+    {
+      "id": "REGRESSION_ADDED",
+      "type": "action",
+      "score_reduction": 15,
+      "description": "회귀 테스트 추가"
+    },
+    {
+      "id": "GREP_EVIDENCE",
+      "type": "action",
+      "score_reduction": 10,
+      "description": "코드에서 직접 근거 확인"
+    },
+    {
+      "id": "LOG_EVIDENCE",
+      "type": "manual",
+      "score_reduction": 10,
+      "description": "로그에서 근거 확인"
+    },
+    {
+      "id": "DOC_REFERENCE",
+      "type": "manual",
+      "score_reduction": 8,
+      "description": "공식 문서/RFC 참조"
+    },
+    {
+      "id": "MANUAL_CONFIRM",
+      "type": "manual",
+      "score_reduction": 5,
+      "description": "사용자 직접 확인"
+    }
+  ],
+  "combo_rules": [
+    {
+      "id": "HEDGE_PLUS_HIGH_RISK",
+      "description": "추정 표현 + 고위험 파일 동시 발생",
+      "conditions": ["HEDGE_STRONG", "HIGH_RISK_FILE"],
+      "force_verdict": "APPROVAL_REQUIRED"
+    }
+  ]
+}

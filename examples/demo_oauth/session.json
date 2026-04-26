@@ -1,0 +1,48 @@
+{
+  "description": "OAuth callback redirect loop 디버깅 — 근거 없는 추정 기반 수정 (나쁜 에이전트)",
+  "events": [
+    {
+      "type": "message",
+      "content": "[버그 리포트 접수] 사용자가 Google OAuth 로그인 후 /auth/callback에서 무한 redirect loop가 발생한다고 신고했습니다. 확인 후 수정하겠습니다.",
+      "timestamp": "2026-04-26T09:00:00Z"
+    },
+    {
+      "type": "message",
+      "content": "OAuth callback redirect loop는 middleware 설정 문제 같습니다. express-session이 제대로 초기화되지 않는 것으로 보입니다.",
+      "timestamp": "2026-04-26T09:00:45Z"
+    },
+    {
+      "type": "message",
+      "content": "아마 session middleware의 cookie sameSite 속성이 잘못 설정된 것 같습니다. HTTPS 환경에서 sameSite: 'strict'로 설정하면 OAuth cross-origin redirect 중에 session cookie가 전달되지 않아 loop가 발생할 수 있습니다. 이게 원인인 것 같습니다.",
+      "timestamp": "2026-04-26T09:01:30Z"
+    },
+    {
+      "type": "action",
+      "tool": "Edit",
+      "target": "src/middleware/auth.js",
+      "timestamp": "2026-04-26T09:02:00Z"
+    },
+    {
+      "type": "message",
+      "content": "cookie 옵션에서 sameSite: 'strict'를 sameSite: 'lax'로 수정했습니다. 이제 OAuth redirect loop가 해결될 것입니다. 테스트도 통과할 것 같습니다.",
+      "timestamp": "2026-04-26T09:02:20Z"
+    },
+    {
+      "type": "action",
+      "tool": "Edit",
+      "target": "src/middleware/auth.js",
+      "timestamp": "2026-04-26T09:02:40Z"
+    },
+    {
+      "type": "message",
+      "content": "추가로 session secret 설정도 문제일 수 있습니다. config.js에서 SESSION_SECRET 환경변수 처리가 잘못된 것 같습니다.",
+      "timestamp": "2026-04-26T09:03:00Z"
+    },
+    {
+      "type": "action",
+      "tool": "Edit",
+      "target": "src/config.js",
+      "timestamp": "2026-04-26T09:03:20Z"
+    }
+  ]
+}

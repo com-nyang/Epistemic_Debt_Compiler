@@ -1,0 +1,21 @@
+{
+  "description": "OAuth redirect loop 디버깅 (해커톤 데모용 — 3이벤트 간소화)",
+  "events": [
+    {
+      "type": "message",
+      "content": "Google OAuth 로그인 후 /auth/callback에서 redirect loop가 발생하는 버그를 확인하겠습니다.",
+      "timestamp": "2026-04-26T09:00:00Z"
+    },
+    {
+      "type": "message",
+      "content": "OAuth callback redirect loop는 middleware 설정 문제 같습니다. 아마 express-session의 cookie sameSite 속성이 잘못 설정된 것이 원인인 것 같습니다.",
+      "timestamp": "2026-04-26T09:00:30Z"
+    },
+    {
+      "type": "action",
+      "tool": "Edit",
+      "target": "src/middleware/auth.js",
+      "timestamp": "2026-04-26T09:01:00Z"
+    }
+  ]
+}

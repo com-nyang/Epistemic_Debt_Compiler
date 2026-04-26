@@ -1,0 +1,51 @@
+{
+  "description": "OAuth callback redirect loop 디버깅 — 증거 기반 수정 (이상적 에이전트)",
+  "events": [
+    {
+      "type": "message",
+      "content": "[버그 리포트 접수] 사용자가 Google OAuth 로그인 후 /auth/callback에서 무한 redirect loop가 발생한다고 신고했습니다. 재현 후 분석하겠습니다.",
+      "timestamp": "2026-04-26T09:00:00Z"
+    },
+    {
+      "type": "action",
+      "tool": "Bash",
+      "command": "grep -n 'session\\|cookie\\|redirect_uri\\|sameSite\\|callback\\|passport' src/middleware/auth.js",
+      "timestamp": "2026-04-26T09:00:30Z"
+    },
+    {
+      "type": "message",
+      "content": "grep 결과 확인 완료. auth.js 47번째 줄: sameSite: 'strict' 설정 발견. auth.js 63번째 줄: passport.authenticate 이후 redirect_uri가 session에 저장되지 않음.",
+      "timestamp": "2026-04-26T09:01:00Z"
+    },
+    {
+      "type": "test",
+      "command": "pytest tests/test_oauth_flow.py::test_callback_redirect_loop -v",
+      "exit_code": 1,
+      "output": "FAILED tests/test_oauth_flow.py::test_callback_redirect_loop\\nAssertionError: Expected final redirect to /dashboard, got /auth/callback (loop detected after 3 redirects)",
+      "timestamp": "2026-04-26T09:01:30Z"
+    },
+    {
+      "type": "message",
+      "content": "버그 재현 완료. 코드 근거: auth.js:47 sameSite strict 설정, auth.js:63 redirect_uri 미저장. express-session 공식 문서 및 RFC 6749 Section 4.1.2에 따르면 redirect_uri는 authorization request 전에 session에 저장되어야 합니다. sameSite: strict는 cross-site redirect에서 cookie 전송을 차단하므로 OAuth callback에서 세션이 유실됩니다.",
+      "timestamp": "2026-04-26T09:02:00Z"
+    },
+    {
+      "type": "action",
+      "tool": "Edit",
+      "target": "src/middleware/auth.js",
+      "timestamp": "2026-04-26T09:02:30Z"
+    },
+    {
+      "type": "test",
+      "command": "pytest tests/test_oauth_flow.py -v",
+      "exit_code": 0,
+      "output": "PASSED tests/test_oauth_flow.py::test_callback_redirect_loop\\nPASSED tests/test_oauth_flow.py::test_oauth_login_success\\nPASSED tests/test_oauth_flow.py::test_oauth_login_failure\\n3 passed in 1.47s",
+      "timestamp": "2026-04-26T09:03:00Z"
+    },
+    {
+      "type": "message",
+      "content": "테스트 3건 통과 확인. sameSite를 lax로 변경하고 auth.js:63에 redirect_uri session 저장 로직 추가. OAuth redirect loop 수정 완료.",
+      "timestamp": "2026-04-26T09:03:30Z"
+    }
+  ]
+}
