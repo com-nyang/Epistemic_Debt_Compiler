@@ -2,6 +2,7 @@
 marp: true
 theme: default
 paginate: true
+html: true
 backgroundColor: #0f0f0f
 color: #e8e8e8
 style: |
@@ -64,6 +65,9 @@ style: |
   }
   strong {
     color: #ffffff;
+  }
+  td strong {
+    color: #a78bfa;
   }
   blockquote {
     border-left: 4px solid #6c63ff;
@@ -291,19 +295,18 @@ $ debt init
 | Google Gemini | `debt watch-gemini --session <id>` |
 | 모든 에이전트 | `debt watch --file session.json` |
 
-<br>
-
-| 기존 도구 | 검사 대상 |
-|-----------|-----------|
-| Lint / 정적 분석 | 코드가 문법적으로 올바른가 |
-| Policy 엔진 | 이 행동이 허용 규칙에 맞는가 |
-| **EDC** | **지금 이 증거로 이 행동이 정당한가** |
+| 도구 | 언제 | 무엇을 | 결과 |
+|------|------|--------|------|
+| Lint | 커밋 전 | 코드 문법/스타일 | 리포트 |
+| Policy 엔진 | 실행 전 | 허용 규칙 매칭 | 허용/거부 |
+| Eval | 실행 후 | 벤치마크 점수 | 리포트 |
+| <span style="color:#a78bfa">**EDC (이 프로젝트)**</span> | <span style="color:#a78bfa">**실행 중**</span> | <span style="color:#a78bfa">**추측→행동 근거**</span> | <span style="color:#a78bfa">**실시간 차단**</span> |
 
 ---
 
 <!-- _class: title -->
 
-# 한 줄 요약
+# Thanks
 
 > **에이전트가 스스로 모른다고 한 것들을,**
 > **우리가 대신 추적합니다.**
