@@ -664,6 +664,11 @@ def judge(
             console.print("  [yellow]⚠  강제 진행 — 기록됨[/yellow]\n")
         raise typer.Exit(0)
 
+    # strict + BLOCK: Claude Code hook 프로토콜
+    if strict and result.verdict.blocks:
+        print(json.dumps({"decision": "block", "reason": f"[EDC] {result.reason}"}, ensure_ascii=False))
+        raise typer.Exit(0)
+
     if not strict:
         fmt.verdict_result(result)
 
