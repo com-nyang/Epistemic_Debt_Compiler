@@ -12,6 +12,7 @@ Epistemic Debt Compiler — CLI 진입점.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Optional
@@ -19,21 +20,54 @@ from typing import Optional
 import typer
 from rich.console import Console
 
+from .config import EDCConfig
+from .claude_sessions import load_claude_session
+from .codex_sessions import load_codex_session
+from .gemini_sessions import load_gemini_session
 from .engine import RuleEngine
 from .formatters import ConsoleFormatter
+from .gemini import GeminiDebtReviewer, gemini_api_key_from_env
+from .i18n import current_language, tr
 from .models import RiskLevel, SessionInput, Verdict
 from .parsers import ActionClassifier, RuleBasedClassifier
 from .registry import DebtRegistry, EDC_DIR
 from .rules import Rules
+from .hooks import register_claude_hook, register_codex_wrapper
+
+LANG = current_language()
 
 app = typer.Typer(
     name="debt",
-    help="Epistemic Debt Compiler — 근거 없는 에이전트 행동을 추적하고 차단한다.",
-    no_args_is_help=True,
+    help=(
+        f"{tr('app_title', LANG)}\n\n"
+        f"{tr('app_subtitle', LANG)}"
+    ),
+    no_args_is_help=False,
     add_completion=False,
 )
 console = Console()
 fmt     = ConsoleFormatter()
+
+
+@app.callback(invoke_without_command=True)
+def root(
+    ctx: typer.Context,
+    set_language: Optional[str] = typer.Option(None, "--set-language", help=tr("set_language_help", LANG)),
+):
+    """명령 없이 실행하면 커스텀 홈 화면을 출력한다."""
+    if set_language:
+        if set_language not in {"ko", "en"}:
+            fmt.error(tr("unsupported_language"))
+            raise typer.Exit(2)
+        config = EDCConfig.load()
+        config.language = set_language
+        config.gemini.language = set_language
+        config.save()
+        console.print(f"\n  [green]✓[/green] {tr('language_saved', set_language, code=set_language)}\n")
+        raise typer.Exit(0)
+    if ctx.invoked_subcommand is None and "--help" not in sys.argv[1:]:
+        fmt.cli_home()
+        raise typer.Exit(0)
 
 
 # ── 공통 헬퍼 ────────────────────────────────────────────────────────────────
@@ -46,25 +80,41 @@ def _find_rules_path() -> Path:
     pkg = Path(__file__).parent.parent / "rules.json"
     if pkg.exists():
         return pkg
-    fmt.error("rules.json을 찾을 수 없습니다. 프로젝트 루트에서 실행하세요.")
+    fmt.error(tr("rules_missing", LANG))
     raise typer.Exit(2)
 
 
 def _require_init() -> None:
     """초기화 여부를 확인하고, 안 되어 있으면 오류를 출력하고 종료한다."""
     if not DebtRegistry.is_initialized():
-        fmt.error(".edc/ 디렉토리가 없습니다. 먼저 `debt init`을 실행하세요.")
+        fmt.error(tr("init_required", LANG))
         raise typer.Exit(2)
 
 
-def _load_engine() -> tuple[RuleEngine, DebtRegistry]:
+def _load_engine(precise: bool = False) -> tuple[RuleEngine, DebtRegistry]:
     """Rules, Registry, Engine을 조립해서 반환한다."""
     rules      = Rules.load(_find_rules_path())
     registry   = DebtRegistry()
     classifier = RuleBasedClassifier(rules)
     action_cls = ActionClassifier(rules)
-    engine     = RuleEngine(rules, classifier, action_cls, registry)
+    reviewer   = _load_reviewer(precise)
+    engine     = RuleEngine(rules, classifier, action_cls, registry, reviewer=reviewer)
     return engine, registry
+
+
+def _load_reviewer(precise: bool):
+    if not precise:
+        return None
+
+    config = EDCConfig.load()
+    api_key = config.gemini.api_key or gemini_api_key_from_env()
+    if not api_key:
+        fmt.error(tr("gemini_missing_key", LANG))
+        raise typer.Exit(2)
+
+    model = config.gemini.model if config.gemini.enabled else "gemini-2.5-flash"
+    language = config.gemini.language if config.gemini.enabled else "ko"
+    return GeminiDebtReviewer(api_key=api_key, model=model, language=language)
 
 
 def _get_or_create_session(registry: DebtRegistry):
@@ -77,49 +127,54 @@ def _get_or_create_session(registry: DebtRegistry):
 
 # ── debt init ────────────────────────────────────────────────────────────────
 
-@app.command()
+@app.command(help=tr("init_help", LANG))
 def init(
-    hook: bool = typer.Option(True, "--hook/--no-hook", help="Claude Code hook 자동 등록 여부"),
+    hook: bool = typer.Option(True, "--hook/--no-hook", help="Claude Code hook auto-registration" if LANG == "en" else "Claude Code hook 자동 등록 여부"),
+    codex: bool = typer.Option(False, "--codex/--no-codex", help="Create Codex CLI wrapper" if LANG == "en" else "Codex CLI 래퍼 생성 여부"),
 ):
-    """프로젝트에 .edc/ 초기화 및 Claude Code hook 설정."""
+    """프로젝트에 .edc/ 초기화 및 에이전트 연동 설정."""
     DebtRegistry.init()
-    console.print("\n  [green]✓[/green] .edc/ 초기화 완료")
+    console.print(f"\n  [green]✓[/green] {tr('init_done', LANG)}")
 
     # Claude Code settings.json에 PreToolUse hook 등록
     if hook:
         settings_path = Path(".claude/settings.json")
-        _register_claude_hook(settings_path)
-        console.print("  [green]✓[/green] Claude Code PreToolUse hook 등록 완료")
+        register_claude_hook(settings_path)
+        console.print(f"  [green]✓[/green] {tr('claude_hook_done', LANG)}")
 
-    console.print("\n  [dim]이제 `debt watch --file <session.json>` 으로 시작하세요.[/dim]\n")
+    # Codex CLI용 래퍼 스크립트 생성
+    if codex:
+        script_path = register_codex_wrapper(Path(".edc/codex-exec"))
+        console.print(f"  [green]✓[/green] {tr('codex_wrapper_done', LANG, path=f'[bold]{script_path}[/bold]')}")
+
+    console.print(f"\n  [dim]{tr('start_watch_hint', LANG)}[/dim]\n")
 
 
-def _register_claude_hook(settings_path: Path) -> None:
-    settings_path.parent.mkdir(exist_ok=True)
-    settings = json.loads(settings_path.read_text()) if settings_path.exists() else {}
-    hook_cmd = "debt judge --tool $TOOL_NAME --strict"
+@app.command(help=tr("clear_help", LANG))
+def clear():
+    """`.edc/config.json`을 제외한 런타임 데이터를 초기화한다."""
+    _require_init()
+    DebtRegistry.clear(keep_files={"config.json"})
+    console.print(f"\n  [green]✓[/green] {tr('runtime_cleared', LANG)}")
+    console.print(f"  [dim]{tr('preserved_config', LANG)}[/dim]\n")
 
-    hooks = settings.setdefault("hooks", {}).setdefault("PreToolUse", [])
-    already = any(
-        hook_cmd in str(h)
-        for entry in hooks
-        for h in entry.get("hooks", [])
-    )
-    if not already:
-        hooks.append({
-            "matcher": "Edit|Write|Bash",
-            "hooks": [{"type": "command", "command": hook_cmd}]
-        })
-        settings_path.write_text(json.dumps(settings, indent=2))
+
 
 
 # ── debt watch ───────────────────────────────────────────────────────────────
 
-@app.command()
+@app.command(
+    help=(
+        f"{tr('watch_help', LANG)}\n"
+        f"  {'옵션' if LANG == 'ko' else 'Options'}:\n"
+        f"    {tr('precise_help', LANG)}"
+    )
+)
 def watch(
-    file:    Optional[Path] = typer.Option(None,  "--file",    "-f", help="분석할 JSON 세션 파일"),
-    dry_run: bool           = typer.Option(False, "--dry-run",        help="감지만, 등록 안 함"),
-    quiet:   bool           = typer.Option(False, "--quiet",   "-q", help="에이전트 출력 숨김"),
+    file:    Optional[Path] = typer.Option(None,  "--file",    "-f", help="JSON session file to analyze" if LANG == "en" else "분석할 JSON 세션 파일"),
+    dry_run: bool           = typer.Option(False, "--dry-run",        help="Detect only; do not persist" if LANG == "en" else "감지만, 등록 안 함"),
+    quiet:   bool           = typer.Option(False, "--quiet",   "-q", help="Hide agent output" if LANG == "en" else "에이전트 출력 숨김"),
+    precise: bool           = typer.Option(False, "--precise", help="Recheck rule detections with Gemini" if LANG == "en" else "Gemini로 규칙 감지를 재검증"),
 ):
     """
     에이전트 출력(JSON 세션 파일 또는 stdin 텍스트)을 분석해서 인지부채를 등록한다.
@@ -132,8 +187,78 @@ def watch(
       echo "I think this is the bug" | debt watch
       claude "버그 수정해줘" | debt watch
     """
+    _run_watch(file=file, dry_run=dry_run, quiet=quiet, precise=precise)
+
+
+@app.command(
+    "watch-claude",
+    help=(
+        f"{tr('watch_claude_help', LANG)}\n"
+        f"  {'옵션' if LANG == 'ko' else 'Options'}:\n"
+        f"    {tr('claude_session_help', LANG)}\n"
+        f"    {tr('precise_help', LANG)}"
+    ),
+)
+def watch_claude(
+    file:    Optional[Path] = typer.Option(None,  "--file",    "-f", help="JSON session file to analyze" if LANG == "en" else "분석할 JSON 세션 파일"),
+    session_id: Optional[str] = typer.Option(None, "--session", help="Claude session ID" if LANG == "en" else "Claude 세션 ID"),
+    dry_run: bool           = typer.Option(False, "--dry-run",        help="Detect only; do not persist" if LANG == "en" else "감지만, 등록 안 함"),
+    quiet:   bool           = typer.Option(False, "--quiet",   "-q", help="Hide agent output" if LANG == "en" else "에이전트 출력 숨김"),
+    precise: bool           = typer.Option(False, "--precise", help="Recheck rule detections with Gemini" if LANG == "en" else "Gemini로 규칙 감지를 재검증"),
+):
+    if session_id:
+        _require_init()
+        engine, registry = _load_engine(precise=precise)
+        session = _get_or_create_session(registry)
+
+        try:
+            session_input = load_claude_session(session_id)
+        except Exception as e:
+            fmt.error(str(e))
+            raise typer.Exit(1)
+
+        _watch_session_input(session_input, engine, registry, session, dry_run, quiet)
+        return
+
+    _run_watch(file=file, dry_run=dry_run, quiet=quiet, precise=precise)
+
+
+@app.command(
+    "watch-gemini",
+    help=(
+        f"{tr('watch_gemini_help', LANG)}\n"
+        f"  {'옵션' if LANG == 'ko' else 'Options'}:\n"
+        f"    {tr('gemini_session_help', LANG)}\n"
+        f"    {tr('precise_help', LANG)}"
+    ),
+)
+def watch_gemini(
+    file:    Optional[Path] = typer.Option(None,  "--file",    "-f", help="JSON session file to analyze" if LANG == "en" else "분석할 JSON 세션 파일"),
+    session_id: Optional[str] = typer.Option(None, "--session", help="Gemini session ID" if LANG == "en" else "Gemini 세션 ID"),
+    dry_run: bool           = typer.Option(False, "--dry-run",        help="Detect only; do not persist" if LANG == "en" else "감지만, 등록 안 함"),
+    quiet:   bool           = typer.Option(False, "--quiet",   "-q", help="Hide agent output" if LANG == "en" else "에이전트 출력 숨김"),
+    precise: bool           = typer.Option(False, "--precise", help="Recheck rule detections with Gemini" if LANG == "en" else "Gemini로 규칙 감지를 재검증"),
+):
+    if session_id:
+        _require_init()
+        engine, registry = _load_engine(precise=precise)
+        session = _get_or_create_session(registry)
+
+        try:
+            session_input = load_gemini_session(session_id)
+        except Exception as e:
+            fmt.error(str(e))
+            raise typer.Exit(1)
+
+        _watch_session_input(session_input, engine, registry, session, dry_run, quiet)
+        return
+
+    _run_watch(file=file, dry_run=dry_run, quiet=quiet, precise=True)
+
+
+def _run_watch(file: Optional[Path], dry_run: bool, quiet: bool, precise: bool) -> None:
     _require_init()
-    engine, registry = _load_engine()
+    engine, registry = _load_engine(precise=precise)
     session = _get_or_create_session(registry)
 
     if file:
@@ -151,11 +276,17 @@ def _watch_json_file(file, engine, registry, session, dry_run, quiet):
         fmt.error(f"JSON 파일 파싱 실패: {e}")
         raise typer.Exit(1)
 
+    _watch_session_input(session_input, engine, registry, session, dry_run, quiet)
+
+
+def _watch_session_input(session_input, engine, registry, session, dry_run, quiet):
+    """SessionInput 객체를 읽어서 각 이벤트를 순서대로 처리한다."""
     if session_input.description and not quiet:
         console.print(f"\n  [bold]{session_input.description}[/bold]")
 
-    console.print(f"\n  [dim]세션 ID: {session.id} | 이벤트: {len(session_input.events)}개[/dim]")
-    console.print()
+    if not quiet:
+        console.print(f"\n  [dim]세션 ID: {session.id} | 이벤트: {len(session_input.events)}개[/dim]")
+        console.print()
 
     all_new_events = []
 
@@ -166,7 +297,12 @@ def _watch_json_file(file, engine, registry, session, dry_run, quiet):
             if not quiet:
                 fmt.event_passthrough(f"[agent] {raw.content}")
             if not dry_run:
-                events = engine.process_text(raw.content, session)
+                events = engine.process_text(
+                    raw.content,
+                    session,
+                    source_timestamp=raw.timestamp,
+                    source_session_id=session_input.source_id,
+                )
                 for ev in events:
                     fmt.detection_alert(ev)
                     all_new_events.append(ev)
@@ -180,7 +316,12 @@ def _watch_json_file(file, engine, registry, session, dry_run, quiet):
                 fmt.event_passthrough(f"[{raw.tool}] {label}")
             if not dry_run:
                 events = engine.process_action(
-                    tool=raw.tool, target=target, command=command, session=session
+                    tool=raw.tool,
+                    target=target,
+                    command=command,
+                    session=session,
+                    source_timestamp=raw.timestamp,
+                    source_session_id=session_input.source_id,
                 )
                 for ev in events:
                     fmt.action_alert(ev)
@@ -202,7 +343,12 @@ def _watch_json_file(file, engine, registry, session, dry_run, quiet):
                 fmt.event_passthrough(f"[file_change] {path}")
             if not dry_run:
                 events = engine.process_action(
-                    tool="Edit", target=path, command="", session=session
+                    tool="Edit",
+                    target=path,
+                    command="",
+                    session=session,
+                    source_timestamp=raw.timestamp,
+                    source_session_id=session_input.source_id,
                 )
                 for ev in events:
                     fmt.action_alert(ev)
@@ -211,8 +357,51 @@ def _watch_json_file(file, engine, registry, session, dry_run, quiet):
     fmt.watch_summary(all_new_events, session.debt_score)
 
 
+@app.command(
+    "watch-codex",
+    help=(
+        f"{tr('watch_codex_help', LANG)}\n"
+        f"  {'옵션' if LANG == 'ko' else 'Options'}:\n"
+        f"    {tr('session_help', LANG)}\n"
+        f"    {tr('precise_help', LANG)}"
+    ),
+)
+def watch_codex(
+    session_id: str = typer.Option(..., "--session", help="Codex session ID" if LANG == "en" else "Codex 세션 ID"),
+    dry_run: bool   = typer.Option(False, "--dry-run", help="Detect only; do not persist" if LANG == "en" else "감지만, 등록 안 함"),
+    quiet: bool     = typer.Option(True, "--quiet/--no-quiet", "-q", help="Hide raw session output" if LANG == "en" else "원문 세션 출력 숨김"),
+    precise: bool   = typer.Option(False, "--precise", "--ai", help="Recheck rule detections with Gemini" if LANG == "en" else "Gemini로 규칙 감지를 재검증"),
+):
+    """
+    Codex 세션 ID를 읽어 .codex/sessions JSONL을 분석하고 인지부채를 등록한다.
+
+    \b
+    예시:
+      debt watch-codex --session 019dc74f-e4f0-74c2-acf5-05119b3132a2
+    """
+    _require_init()
+    engine, registry = _load_engine(precise=precise)
+    session = _get_or_create_session(registry)
+
+    try:
+        session_input = load_codex_session(session_id)
+    except Exception as e:
+        fmt.error(str(e))
+        raise typer.Exit(1)
+
+    if session_input.source_id and session_input.source_id in session.imported_codex_sessions:
+        fmt.info(f"이미 가져온 Codex 세션입니다: {session_input.source_id}")
+        raise typer.Exit(0)
+
+    _watch_session_input(session_input, engine, registry, session, dry_run, quiet)
+
+    if session_input.source_id and not dry_run:
+        session.imported_codex_sessions.append(session_input.source_id)
+        registry.save_session(session)
+
+
 def _watch_stdin(engine, registry, session, dry_run):
-    """stdin에서 텍스트를 줄 단위로 읽어서 분석한다 (pipe 모드)."""
+    """stdin에서 텍스트(또는 JSONL)를 줄 단위로 읽어서 분석한다 (pipe 모드)."""
     console.print(f"\n  [dim]stdin 모드 — 텍스트를 입력하세요 (Ctrl+D로 종료)[/dim]\n")
     all_new_events = []
 
@@ -221,21 +410,107 @@ def _watch_stdin(engine, registry, session, dry_run):
         if not line:
             continue
 
+        text_to_process = line
+        actions_to_process = []
+        
+        # JSONL 지원 (Claude, Codex, Gemini 로그 등)
+        try:
+            row = json.loads(line)
+            if not isinstance(row, dict):
+                raise json.JSONDecodeError("not a dict", line, 0)
+
+            row_type = row.get("type")
+
+            # Claude Code 포맷
+            if row_type == "assistant":
+                text_to_process = ""
+                msg = row.get("message") or {}
+                content_list = msg.get("content") if isinstance(msg, dict) else None
+                if isinstance(content_list, list):
+                    from .claude_sessions import _parse_assistant_message, _shell_command_from_input
+                    text_parts = []
+                    for item in content_list:
+                        item_type = item.get("type")
+                        if item_type in {"text", "output_text"} and item.get("text"):
+                            text_parts.append(item["text"])
+                        elif item_type == "tool_use":
+                            tool_name = item.get("name", "")
+                            tool_input = item.get("input") or {}
+                            if tool_name.lower() == "bash":
+                                cmd = _shell_command_from_input(tool_input)
+                                if cmd:
+                                    actions_to_process.append(("Bash", "", cmd))
+                            elif tool_name.lower() in {"edit", "write"}:
+                                target = (
+                                    tool_input.get("file_path")
+                                    or tool_input.get("path")
+                                    or tool_input.get("target") or ""
+                                )
+                                if target:
+                                    actions_to_process.append((tool_name.capitalize(), target, ""))
+                    from .claude_sessions import _clean_assistant_text
+                    text_to_process = _clean_assistant_text("\n".join(text_parts))
+
+            # Gemini 포맷
+            elif row_type == "gemini":
+                content = row.get("content")
+                if isinstance(content, str):
+                    text_to_process = content
+                elif isinstance(content, list) and content and "text" in content[0]:
+                    text_to_process = content[0]["text"]
+                else:
+                    text_to_process = ""
+                for call in row.get("toolCalls", []):
+                    if call.get("name") == "run_shell_command":
+                        cmd = call.get("args", {}).get("command")
+                        if cmd:
+                            actions_to_process.append(("Bash", "", cmd))
+
+            # Codex 포맷
+            elif row_type == "response_item":
+                payload = row.get("payload", {})
+                if payload.get("type") == "message" and payload.get("role") == "assistant":
+                    content_list = payload.get("content", [])
+                    if content_list and content_list[0].get("type") == "output_text":
+                        text_to_process = content_list[0].get("text", "")
+
+            # 인식되지 않는 JSON → 건너뜀
+            else:
+                text_to_process = ""
+
+        except json.JSONDecodeError:
+            pass  # 단순 텍스트로 처리
+
         if not dry_run:
-            events = engine.process_text(line, session)
-            for ev in events:
-                fmt.detection_alert(ev)
-                all_new_events.append(ev)
+            # 텍스트 처리
+            if text_to_process.strip():
+                events = engine.process_text(text_to_process, session)
+                for ev in events:
+                    fmt.detection_alert(ev)
+                    all_new_events.append(ev)
+            
+            # 액션 처리
+            for tool, target, cmd in actions_to_process:
+                events = engine.process_action(
+                    tool=tool,
+                    target=target,
+                    command=cmd,
+                    session=session,
+                )
+                for ev in events:
+                    fmt.action_alert(ev)
+                    all_new_events.append(ev)
 
     fmt.watch_summary(all_new_events, session.debt_score)
 
 
 # ── debt ls ──────────────────────────────────────────────────────────────────
 
-@app.command(name="ls")
+@app.command(name="ls", help=tr("ls_help", LANG))
 def list_debts(
     risk:        Optional[str] = typer.Option(None,  "--risk",  help="리스크 필터: HIGH | MEDIUM | LOW"),
     show_all:    bool          = typer.Option(False, "--all",   "-a", help="해소된 항목 포함"),
+    limit:       int           = typer.Option(10,    "--limit", "-l", help="출력할 항목 개수 제한 (최신순)"),
     json_output: bool          = typer.Option(False, "--json",  help="JSON 형식 출력"),
 ):
     """현재 세션의 인지부채 목록을 출력한다."""
@@ -254,6 +529,10 @@ def list_debts(
         risk_filter=risk_filter,
     )
 
+    # 제한 적용
+    if limit > 0:
+        events = events[:limit]
+
     if json_output:
         # Rich console를 거치지 않고 stdout에 직접 출력 (제어 문자 방지)
         sys.stdout.write(json.dumps([e.model_dump(mode="json") for e in events], indent=2, ensure_ascii=False) + "\n")
@@ -263,7 +542,7 @@ def list_debts(
 
 # ── debt repay ───────────────────────────────────────────────────────────────
 
-@app.command()
+@app.command(help=tr("repay_help", LANG))
 def repay(
     event_id: str           = typer.Argument(..., metavar="ID", help="상환할 인지부채 ID (예: edc-abc123)"),
     test:     Optional[str] = typer.Option(None, "--test",   help="테스트 명령 실행 후 해소 (exit 0이면 자동 해소)"),
@@ -325,12 +604,13 @@ def _resolve_repay_args(
 
 # ── debt judge ───────────────────────────────────────────────────────────────
 
-@app.command()
+@app.command(help=tr("judge_help", LANG))
 def judge(
-    tool:   Optional[str] = typer.Option(None,  "--tool",   help="판정할 도구 이름 (Edit|Write|Bash)"),
-    target: Optional[str] = typer.Option(None,  "--target", help="대상 파일/경로"),
-    strict: bool          = typer.Option(False, "--strict", help="비대화형 모드 (CI/hook 용)"),
-    force:  bool          = typer.Option(False, "--force",  help="BLOCK 무시 강제 진행 (기록됨)"),
+    tool:    Optional[str] = typer.Option(None,  "--tool",    help="판정할 도구 이름 (Edit|Write|Bash)"),
+    target:  Optional[str] = typer.Option(None,  "--target",  help="대상 파일/경로"),
+    command: Optional[str] = typer.Option(None,  "--command", help="실행할 명령어 (Bash hook용)"),
+    strict:  bool          = typer.Option(False, "--strict",  help="비대화형 모드 (CI/hook 용)"),
+    force:   bool          = typer.Option(False, "--force",   help="BLOCK 무시 강제 진행 (기록됨)"),
 ):
     """
     현재 인지부채 상태를 기반으로 진행 가능 여부를 판정한다.
@@ -352,8 +632,26 @@ def judge(
         raise typer.Exit(2)
 
     # hook에서 --tool 플래그로 실시간 액션 전달 시 즉시 분석
+    # stdin에 Claude Code가 보낸 JSON이 있으면 command/target 자동 추출
     if tool:
-        engine.process_action(tool=tool, target=target or "", session=session)
+        resolved_command = command or ""
+        resolved_target  = target  or ""
+
+        if not resolved_command and not resolved_target and not sys.stdin.isatty():
+            try:
+                payload = json.loads(sys.stdin.read())
+                tool_input = payload.get("tool_input", {})
+                resolved_command = tool_input.get("command", "")
+                resolved_target  = tool_input.get("path", "") or tool_input.get("file_path", "")
+            except (json.JSONDecodeError, OSError):
+                pass
+
+        engine.process_action(
+            tool=tool,
+            target=resolved_target,
+            command=resolved_command,
+            session=session,
+        )
 
     result = engine.get_verdict(session)
 
@@ -372,11 +670,74 @@ def judge(
     raise typer.Exit(result.verdict.exit_code)
 
 
+# ── debt dashboard ───────────────────────────────────────────────────────────
+
+@app.command(help=tr("dashboard_help", LANG))
+def dashboard(
+    session_id: Optional[str] = typer.Argument(None, help="Session ID or log file path"),
+    type: str = typer.Option("codex", "--type", "-t", help="Agent type: codex | claude | gemini"),
+):
+    """
+    tmux 기반의 실시간 모니터링 대시보드를 실행한다.
+
+    \b
+    예시:
+      debt dashboard 019dc74f
+      debt dashboard --type gemini latest
+      debt dashboard --type claude abc123
+    """
+    _require_init()
+    
+    target_file: Optional[Path] = None
+    
+    if session_id:
+        path = Path(session_id)
+        if path.exists() and path.is_file():
+            target_file = path
+        else:
+            try:
+                if type.lower() == "claude":
+                    from .claude_sessions import find_claude_session_file
+                    target_file = find_claude_session_file(session_id)
+                else:
+                    from .codex_sessions import find_session_file
+                    target_file = find_session_file(session_id, agent_type=type)
+            except Exception as e:
+                fmt.error(str(e))
+                raise typer.Exit(1)
+    elif type.lower() == "claude":
+        # session_id 없이 --type claude → 현재 프로젝트의 가장 최근 세션
+        from .claude_sessions import CLAUDE_SESSIONS_DIR
+        project_key = "-" + str(Path.cwd()).replace("/", "-").replace("_", "-").lstrip("-")
+        project_dir = CLAUDE_SESSIONS_DIR / project_key
+        matches = sorted(project_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
+        if not matches:
+            fmt.error(f"Claude 세션 파일을 찾을 수 없습니다: {project_dir}")
+            raise typer.Exit(1)
+        target_file = matches[0]
+
+    if not target_file:
+        fmt.error("세션 ID 또는 로그 파일 경로를 입력하세요.")
+        raise typer.Exit(1)
+
+    # 대시보드 스크립트 실행
+    script_path = Path(__file__).parent.parent / "debt-dashboard.sh"
+    if not script_path.exists():
+        fmt.error("대시보드 스크립트를 찾을 수 없습니다.")
+        raise typer.Exit(1)
+
+    console.print(f"\n  [bold blue]대시보드 실행 중...[/bold blue] [dim]파일: {target_file}[/dim]\n")
+    
+    # tmux 실행 (현재 프로세스 대체)
+    os.execv("/usr/bin/bash", ["bash", str(script_path), str(target_file)])
+
+
 # ── debt explain ─────────────────────────────────────────────────────────────
 
-@app.command()
+@app.command(help=tr("explain_help", LANG))
 def explain(
     event_id: str = typer.Argument(..., metavar="ID", help="상세 조회할 인지부채 ID"),
+    use_ai: bool = typer.Option(False, "--ai", "--gemini", help="Gemini AI를 사용해 상세 분석 및 가이드를 생성한다."),
 ):
     """특정 인지부채의 상세 정보와 상환 가이드를 출력한다."""
     _require_init()
@@ -387,7 +748,54 @@ def explain(
         fmt.error(f"'{event_id}'를 찾을 수 없습니다. `debt ls`로 ID를 확인하세요.")
         raise typer.Exit(1)
 
+    # Gemini AI 상세 분석 요청
+    if use_ai:
+        config = EDCConfig.load()
+        api_key = config.gemini.api_key or gemini_api_key_from_env()
+        
+        if not api_key:
+            fmt.error(tr("gemini_missing_key", LANG))
+            raise typer.Exit(2)
+
+        with console.status(f"[bold blue]{tr('gemini_thinking', LANG)}[/bold blue]"):
+            from .gemini import GeminiDebtReviewer
+            model = config.gemini.model if config.gemini.enabled else "gemini-2.0-flash"
+            reviewer = GeminiDebtReviewer(api_key=api_key, model=model, language=LANG)
+            
+            ai_analysis = reviewer.analyze_debt(event)
+            event.reviewer_reason = ai_analysis
+            event.reviewer = "Gemini AI"
+
     fmt.explain_event(event)
+
+
+
+@app.command("setup-gemini", help=tr("setup_gemini_help", LANG))
+def setup_gemini(
+    api_key: str = typer.Option(
+        ...,
+        "--api-key",
+        prompt=True,
+        hide_input=True,
+        confirmation_prompt=True,
+        help="Gemini API key",
+    ),
+    model: str = typer.Option("gemini-2.0-flash", "--model", help="Gemini model name"),
+    lang: str = typer.Option("ko", "--lang", help="Gemini explanation language: ko | en"),
+):
+    """Gemini API 기반 정밀 분석 설정을 저장한다."""
+    _require_init()
+    if lang not in {"ko", "en"}:
+        fmt.error("지원하는 언어는 `ko`, `en` 입니다.")
+        raise typer.Exit(2)
+
+    config = EDCConfig.load()
+    config.gemini.enabled = True
+    config.gemini.api_key = api_key
+    config.gemini.model = model
+    config.gemini.language = lang
+    config.save()
+    console.print(f"\n  [green]✓[/green] Gemini 설정 저장 완료  [dim]model={model} lang={lang}[/dim]\n")
 
 
 # ── 진입점 ───────────────────────────────────────────────────────────────────

@@ -5,6 +5,7 @@ RuleEngine의 텍스트 처리, 액션 처리, 상환, 판정 로직을 검증�
 import pytest
 
 from app.engine import RuleEngine
+from app.gemini import ReviewDecision
 from app.models import RiskLevel, Verdict
 
 
@@ -45,9 +46,53 @@ class TestProcessText:
         assert stored is not None
         assert stored.rule_id == "HEDGE_STRONG"
 
+    def test_text_event_keeps_source_context_and_metadata(self, engine, session):
+        events = engine.process_text(
+            "I think this is the issue.",
+            session,
+            source_timestamp="2026-04-26T01:00:00Z",
+            source_session_id="codex-session-1",
+        )
+        assert events[0].source_context == "I think this is the issue."
+        assert events[0].source_timestamp == "2026-04-26T01:00:00Z"
+        assert events[0].source_session_id == "codex-session-1"
+
     def test_session_event_ids_updated(self, engine, session):
         events = engine.process_text("I think this is the issue.", session)
         assert events[0].id in session.event_ids
+
+    def test_reviewer_can_filter_out_detected_rules(self, rules, classifier, action_classifier, registry, session):
+        class FakeReviewer:
+            def review_text(self, text, candidates, action_history=None):
+                return ReviewDecision(accepted_rule_ids=set(), reasons={})
+
+        engine = RuleEngine(rules, classifier, action_classifier, registry, reviewer=FakeReviewer())
+        events = engine.process_text("I think this is the issue.", session)
+        assert events == []
+
+    def test_reviewer_none_falls_back_to_rule_based_result(self, rules, classifier, action_classifier, registry, session):
+        class FakeReviewer:
+            def review_text(self, text, candidates, action_history=None):
+                return None
+
+        engine = RuleEngine(rules, classifier, action_classifier, registry, reviewer=FakeReviewer())
+        events = engine.process_text("I think this is the issue.", session)
+        assert len(events) == 1
+
+    def test_reviewer_reason_is_saved_on_event(self, rules, classifier, action_classifier, registry, session):
+        class FakeReviewer:
+            def review_text(self, text, candidates, action_history=None):
+                return ReviewDecision(
+                    accepted_rule_ids={"HEDGE_STRONG"},
+                    reasons={"HEDGE_STRONG": "추정성 진단을 근거가 확정된 판단처럼 제시하고 있습니다."},
+                )
+
+        engine = RuleEngine(rules, classifier, action_classifier, registry, reviewer=FakeReviewer())
+        events = engine.process_text("I think this is the issue.", session)
+
+        assert len(events) == 1
+        assert events[0].reviewer == "gemini"
+        assert events[0].reviewer_reason == "추정성 진단을 근거가 확정된 판단처럼 제시하고 있습니다."
 
 
 # ── process_action ────────────────────────────────────────────────────────────
@@ -83,6 +128,18 @@ class TestProcessAction:
         )
         rule_ids = [e.rule_id for e in events]
         assert "DESTRUCTIVE_CMD" in rule_ids
+
+    def test_action_event_keeps_source_context_and_metadata(self, engine, session):
+        events = engine.process_action(
+            "Bash",
+            command="rm -rf ./dist",
+            session=session,
+            source_timestamp="2026-04-26T01:05:00Z",
+            source_session_id="codex-session-2",
+        )
+        assert events[0].source_context == "rm -rf ./dist"
+        assert events[0].source_timestamp == "2026-04-26T01:05:00Z"
+        assert events[0].source_session_id == "codex-session-2"
 
     def test_safe_bash_creates_no_events(self, engine, session):
         events = engine.process_action(

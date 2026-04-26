@@ -15,6 +15,7 @@ from .models import (
     RepayResult, RiskLevel, Session, Verdict, VerdictResult,
 )
 from .parsers import ActionClassifier, Classifier
+from .gemini import DebtReviewer
 from .registry import DebtRegistry
 from .rules import Rules
 
@@ -27,20 +28,44 @@ class RuleEngine:
         classifier:        Classifier,
         action_classifier: ActionClassifier,
         registry:          DebtRegistry,
+        reviewer:          DebtReviewer | None = None,
     ) -> None:
         self._rules             = rules
         self._classifier        = classifier
         self._action_classifier = action_classifier
         self._registry          = registry
+        self._reviewer          = reviewer
 
     # ── 텍스트 처리 ─────────────────────────────────────────────────────────
 
-    def process_text(self, text: str, session: Session) -> list[DebtItem]:
+    def process_text(
+        self,
+        text: str,
+        session: Session,
+        source_timestamp: str | None = None,
+        source_session_id: str | None = None,
+    ) -> list[DebtItem]:
         """에이전트 자연어 출력을 분석해서 인지부채를 등록한다."""
         classified = self._classifier.classify(text)
+        review_reasons: dict[str, str] = {}
+        reviewed_by: str | None = None
+        if classified and self._reviewer:
+            decision = self._reviewer.review_text(text, classified, session.action_history)
+            if decision is not None:
+                classified = [c for c in classified if c.rule_id in decision.accepted_rule_ids]
+                review_reasons = decision.reasons
+                reviewed_by = "gemini"
         events = []
         for c in classified:
-            event = self._make_text_event(c, session)
+            event = self._make_text_event(
+                c,
+                session,
+                source_context=text,
+                source_timestamp=source_timestamp,
+                source_session_id=source_session_id,
+                reviewer=reviewed_by,
+                reviewer_reason=review_reasons.get(c.rule_id),
+            )
             self._registry.add_event(event)
             session.add_event(event)
             events.append(event)
@@ -55,6 +80,8 @@ class RuleEngine:
         target:  str    = "",
         command: str    = "",
         session: Session = None,
+        source_timestamp: str | None = None,
+        source_session_id: str | None = None,
     ) -> list[DebtItem]:
         """도구 호출(Edit/Write/Bash)을 분석해서 인지부채를 등록한다."""
         session.record_action(tool.lower())
@@ -66,7 +93,15 @@ class RuleEngine:
 
         events = []
         for c in classified:
-            event = self._make_action_event(c, session, tool, target, command)
+            event = self._make_action_event(
+                c,
+                session,
+                tool,
+                target,
+                command,
+                source_timestamp=source_timestamp,
+                source_session_id=source_session_id,
+            )
             self._registry.add_event(event)
             session.add_event(event)
             events.append(event)
@@ -81,6 +116,19 @@ class RuleEngine:
         """
         session.record_action("test")
         self._registry.save_session(session)
+
+        # 테스트 성공 시 관련 부채 자동 상환
+        if exit_code == 0:
+            events = self._registry.get_session_events(session.id, unresolved_only=True)
+            for event in events:
+                if event.rule_id in ("EDIT_NO_TEST", "CLAIM_TEST_PASS"):
+                    self.process_repayment(
+                        event_id=event.id,
+                        repay_id="TEST_PASS",
+                        evidence="자동 감지: 테스트 통과",
+                        session=session,
+                        run_command=None  # 이미 통과된 테스트이므로 다시 실행하지 않음
+                    )
 
     # ── 부채 상환 ───────────────────────────────────────────────────────────
 
@@ -181,7 +229,16 @@ class RuleEngine:
 
     # ── 내부 헬퍼 ───────────────────────────────────────────────────────────
 
-    def _make_text_event(self, c: ClassifiedDebt, session: Session) -> DebtItem:
+    def _make_text_event(
+        self,
+        c: ClassifiedDebt,
+        session: Session,
+        source_context: str | None = None,
+        source_timestamp: str | None = None,
+        source_session_id: str | None = None,
+        reviewer: str | None = None,
+        reviewer_reason: str | None = None,
+    ) -> DebtItem:
         return DebtItem(
             session_id=session.id,
             rule_id=c.rule_id,
@@ -189,11 +246,18 @@ class RuleEngine:
             risk_level=c.risk_level,
             score=c.score,
             source="text",
+            source_context=source_context,
+            source_timestamp=source_timestamp,
+            source_session_id=source_session_id,
+            reviewer=reviewer,
+            reviewer_reason=reviewer_reason,
         )
 
     def _make_action_event(
         self, c: ClassifiedDebt, session: Session,
         tool: str, target: str, command: str,
+        source_timestamp: str | None = None,
+        source_session_id: str | None = None,
     ) -> DebtItem:
         return DebtItem(
             session_id=session.id,
@@ -202,6 +266,9 @@ class RuleEngine:
             risk_level=c.risk_level,
             score=c.score,
             source="action",
+            source_context=command or target or None,
+            source_timestamp=source_timestamp,
+            source_session_id=source_session_id,
             tool_name=tool,
             target_path=target or None,
             command=command or None,

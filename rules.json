@@ -10,8 +10,18 @@
       "id": "HEDGE_WEAK",
       "type": "text",
       "patterns": {
-        "en": ["\\bmight\\b", "\\bcould be\\b", "\\bperhaps\\b", "\\bmaybe\\b", "\\bpossibly\\b"],
-        "ko": ["일 수 있", "어쩌면", "혹시"]
+        "en": [
+          "\\bmight\\b",
+          "\\bcould be\\b",
+          "\\bperhaps\\b",
+          "\\bmaybe\\b",
+          "\\bpossibly\\b"
+        ],
+        "ko": [
+          "일 수 있",
+          "어쩌면",
+          "혹시"
+        ]
       },
       "score": 5,
       "risk_level": "LOW",
@@ -21,8 +31,22 @@
       "id": "HEDGE_STRONG",
       "type": "text",
       "patterns": {
-        "en": ["I think", "probably", "seems like", "I believe", "\\blikely\\b", "I suspect"],
-        "ko": ["것 같", "아마", "인 듯", "보입니다", "같습니다", "것으로 보"]
+        "en": [
+          "I think",
+          "probably",
+          "seems like",
+          "I believe",
+          "\\blikely\\b",
+          "I suspect"
+        ],
+        "ko": [
+          "것 같",
+          "아마",
+          "인 듯",
+          "보입니다",
+          "같습니다",
+          "것으로 보"
+        ]
       },
       "score": 10,
       "risk_level": "MEDIUM",
@@ -32,8 +56,20 @@
       "id": "ASSUME_FACT",
       "type": "text",
       "patterns": {
-        "en": ["the root cause is", "this is definitely", "must be the", "the bug is in", "the issue is in"],
-        "ko": ["이게 원인", "확실히", "원인은", "여기가 문제", "이 함수가 원인"]
+        "en": [
+          "the root cause is",
+          "this is definitely",
+          "must be the",
+          "the bug is in",
+          "the issue is in"
+        ],
+        "ko": [
+          "이게 원인",
+          "확실히",
+          "원인은",
+          "여기가 문제",
+          "이 함수가 원인"
+        ]
       },
       "score": 15,
       "risk_level": "MEDIUM",
@@ -43,8 +79,22 @@
       "id": "CLAIM_TEST_PASS",
       "type": "text",
       "patterns": {
-        "en": ["should work now", "should pass", "this will fix", "should be fine", "should be working", "this fixes"],
-        "ko": ["잘 될 것", "동작할 것", "통과할 것", "해결될 것", "작동할 것", "고쳐질 것"]
+        "en": [
+          "should work now",
+          "should pass",
+          "this will fix",
+          "should be fine",
+          "should be working",
+          "this fixes"
+        ],
+        "ko": [
+          "잘 될 것",
+          "동작할 것",
+          "통과할 것",
+          "해결될 것",
+          "작동할 것",
+          "고쳐질 것"
+        ]
       },
       "score": 20,
       "risk_level": "HIGH",
@@ -53,7 +103,10 @@
     {
       "id": "EDIT_NO_TEST",
       "type": "action",
-      "trigger": ["Edit", "Write"],
+      "trigger": [
+        "Edit",
+        "Write"
+      ],
       "condition": "no_test_run_in_session",
       "score": 20,
       "risk_level": "HIGH",
@@ -64,43 +117,91 @@
     {
       "id": "HIGH_RISK_FILE",
       "type": "action",
-      "trigger": ["Edit", "Write"],
+      "trigger": [
+        "Edit",
+        "Write"
+      ],
       "condition": "target_matches_risk_patterns",
       "score": 25,
       "risk_level": "HIGH",
       "force_verdict": null,
       "risk_patterns": [
-        "auth", "login", "token", "credential", "password", "secret",
-        "migration", "schema", "\\.env", "config", "settings",
-        "payment", "billing", "deploy", "dockerfile"
+        "auth",
+        "login",
+        "token",
+        "credential",
+        "password",
+        "secret",
+        "migration",
+        "schema",
+        "\\.env",
+        "config",
+        "settings",
+        "payment",
+        "billing",
+        "deploy",
+        "dockerfile"
       ],
       "destructive_patterns": []
     },
     {
       "id": "DESTRUCTIVE_CMD",
       "type": "action",
-      "trigger": ["Bash"],
+      "trigger": [
+        "Bash"
+      ],
       "condition": "command_matches_destructive_patterns",
       "score": 30,
       "risk_level": "HIGH",
       "force_verdict": "BLOCK",
       "risk_patterns": [],
       "destructive_patterns": [
-        "rm -rf", "DROP TABLE", "DROP DATABASE",
-        "git reset --hard", "git clean -f",
-        "truncate", "DELETE FROM"
+        "rm -rf",
+        "DROP TABLE",
+        "DROP DATABASE",
+        "git reset --hard",
+        "git clean -f",
+        "truncate",
+        "DELETE FROM",
+        "git push --force",
+        "git push -f"
       ]
     },
     {
       "id": "RETRY_SAME_FIX",
       "type": "action",
-      "trigger": ["Edit", "Write"],
+      "trigger": [
+        "Edit",
+        "Write"
+      ],
       "condition": "same_file_count_gte_3",
       "score": 15,
       "risk_level": "MEDIUM",
       "force_verdict": null,
       "risk_patterns": [],
       "destructive_patterns": []
+    },
+    {
+      "id": "SECURITY_RISK_CMD",
+      "type": "action",
+      "trigger": [
+        "Bash"
+      ],
+      "condition": "command_matches_destructive_patterns",
+      "score": 25,
+      "risk_level": "HIGH",
+      "force_verdict": "APPROVAL_REQUIRED",
+      "risk_patterns": [],
+      "destructive_patterns": [
+        "curl",
+        "wget",
+        "nc ",
+        "netcat",
+        "telnet",
+        "export AWS_",
+        "export GCP_",
+        "export STRIPE_"
+      ]
     }
   ],
   "repay_events": [
@@ -151,7 +252,10 @@
     {
       "id": "HEDGE_PLUS_HIGH_RISK",
       "description": "추정 표현 + 고위험 파일 동시 발생",
-      "conditions": ["HEDGE_STRONG", "HIGH_RISK_FILE"],
+      "conditions": [
+        "HEDGE_STRONG",
+        "HIGH_RISK_FILE"
+      ],
       "force_verdict": "APPROVAL_REQUIRED"
     }
   ]

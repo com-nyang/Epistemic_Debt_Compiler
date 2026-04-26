@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Literal, Optional
 
@@ -54,6 +54,11 @@ class DebtItem(BaseModel):
     risk_level:  RiskLevel
     score:       int
     source:      Literal["text", "action"]
+    source_context: Optional[str] = None
+    source_timestamp: Optional[str] = None
+    source_session_id: Optional[str] = None
+    reviewer: Optional[str] = None
+    reviewer_reason: Optional[str] = None
 
     # 액션 이벤트 전용 (source == "action")
     tool_name:   Optional[str] = None       # "Edit", "Write", "Bash"
@@ -79,7 +84,7 @@ class DebtItem(BaseModel):
 
 class Session(BaseModel):
     id:           str      = Field(default_factory=lambda: uuid.uuid4().hex[:8])
-    started_at:   datetime = Field(default_factory=datetime.utcnow)
+    started_at:   datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     project_root: str
 
     debt_score:      int    = 0
@@ -88,6 +93,7 @@ class Session(BaseModel):
     event_ids:       list[str] = Field(default_factory=list)
     action_history:  list[str] = Field(default_factory=list)  # "edit", "bash", "test" 등
     force_overrides: int       = 0
+    imported_codex_sessions: list[str] = Field(default_factory=list)
 
     def add_event(self, event: DebtItem) -> None:
         self.event_ids.append(event.id)
@@ -158,3 +164,4 @@ class SessionInput(BaseModel):
     """debt watch --file 로 전달되는 JSON 파일 전체 구조."""
     description: Optional[str] = None
     events:      list[RawEvent]
+    source_id:   Optional[str] = None

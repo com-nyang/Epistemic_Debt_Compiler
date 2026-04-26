@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 from .models import DebtItem, Registry, RiskLevel, Session
@@ -34,6 +35,22 @@ class DebtRegistry:
     @staticmethod
     def is_initialized(edc_dir: Path = EDC_DIR) -> bool:
         return (edc_dir / "debt.json").exists()
+
+    @staticmethod
+    def clear(edc_dir: Path = EDC_DIR, keep_files: set[str] | None = None) -> None:
+        """`.edc/` 내부를 비우되 지정한 파일은 보존하고 debt.json을 다시 생성한다."""
+        keep = keep_files or set()
+
+        if edc_dir.exists():
+            for child in edc_dir.iterdir():
+                if child.name in keep:
+                    continue
+                if child.is_dir():
+                    shutil.rmtree(child)
+                else:
+                    child.unlink()
+
+        DebtRegistry.init(edc_dir)
 
     # ── 세션 관리 ────────────────────────────────────────────────────────────
 
@@ -90,6 +107,9 @@ class DebtRegistry:
 
         if risk_filter:
             events = [e for e in events if e.risk_level == risk_filter]
+
+        # 최신순 정렬 (created_at 내림차순)
+        events.sort(key=lambda x: x.created_at, reverse=True)
 
         return events
 

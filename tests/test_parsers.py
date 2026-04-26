@@ -141,6 +141,19 @@ class TestRuleBasedClassifier:
         hedge = next(r for r in results if r.rule_id == "HEDGE_STRONG")
         assert len(hedge.claim) < len(text)
 
+    def test_ignores_malformed_backtick_fragment(self, classifier):
+        results = classifier.classify("rules` 로 보입니다.")
+        assert results == []
+
+    def test_ignores_short_broken_assumption_fragment(self, classifier):
+        results = classifier.classify("- `원인은 .")
+        assert results == []
+
+    def test_balanced_backticks_still_allow_detection(self, classifier):
+        results = classifier.classify("원인은 `hatchling` 설정 문제입니다.")
+        ids = [r.rule_id for r in results]
+        assert "ASSUME_FACT" in ids
+
 
 # ── ActionClassifier ─────────────────────────────────────────────────────────
 

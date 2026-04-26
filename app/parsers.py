@@ -39,39 +39,53 @@ class RuleBasedClassifier:
         self._rules = rules.get_text_rules()
 
     def classify(self, text: str) -> list[ClassifiedDebt]:
-        results:     list[ClassifiedDebt] = []
-        matched_ids: set[str]             = set()
+        """
+        텍스트를 분석하여 인지부채를 분류한다.
+        문장별로 가장 점수가 높은 규칙 하나만 적용하여 중복 감지를 방지한다.
+        """
+        # 1. 텍스트를 문장 단위로 분리 (간단한 구현)
+        sentences = re.split(r"[.!?,;\n]", text)
+        sentences = [s.strip() for s in sentences if len(s.strip()) > 5]
+        
+        results: list[ClassifiedDebt] = []
+        processed_sentences: set[str] = set()
 
-        for rule in self._rules:
-            if rule.id in matched_ids:
+        for sentence in sentences:
+            if sentence in processed_sentences:
                 continue
 
-            matched_text = self._first_match(text, rule)
-            if matched_text is None:
-                continue
+            best_match: ClassifiedDebt | None = None
+            
+            for rule in self._rules:
+                if self._sentence_matches_rule(sentence, rule):
+                    candidate = ClassifiedDebt(
+                        rule_id=rule.id,
+                        claim=sentence,
+                        score=rule.score,
+                        risk_level=RiskLevel(rule.risk_level),
+                        force_verdict=Verdict(rule.force_verdict) if rule.force_verdict else None,
+                    )
+                    
+                    # 가장 높은 점수의 규칙을 선택
+                    if best_match is None or candidate.score > best_match.score:
+                        best_match = candidate
 
-            results.append(ClassifiedDebt(
-                rule_id=rule.id,
-                claim=matched_text,
-                score=rule.score,
-                risk_level=RiskLevel(rule.risk_level),
-                force_verdict=Verdict(rule.force_verdict) if rule.force_verdict else None,
-            ))
-            matched_ids.add(rule.id)
+            if best_match:
+                results.append(best_match)
+                processed_sentences.add(sentence)
 
         return results
 
-    def _first_match(self, text: str, rule: TextRule) -> str | None:
-        """패턴이 매칭되면 해당 문장을 반환, 없으면 None."""
+    def _sentence_matches_rule(self, sentence: str, rule: TextRule) -> bool:
+        """문장이 규칙의 패턴 중 하나라도 매치되는지 확인."""
         for patterns in rule.patterns.values():
             for pattern in patterns:
-                m = re.search(pattern, text, re.IGNORECASE)
-                if m:
-                    return self._extract_sentence(text, m.start())
-        return None
+                if re.search(pattern, sentence, re.IGNORECASE):
+                    return True
+        return False
 
     @staticmethod
-    def _extract_sentence(text: str, match_pos: int) -> str:
+    def _extract_sentence(text: str, match_pos: int) -> str | None:
         """매칭 위치 기준으로 가장 가까운 문장을 잘라서 반환한다."""
         # 이전 문장 끝(.!?) 이후부터 시작
         start = 0
@@ -87,7 +101,18 @@ class RuleBasedClassifier:
             if idx != -1:
                 end = min(end, idx + 1)
 
-        return text[start:end].strip()
+        sentence = text[start:end].strip()
+        sentence = re.sub(r"^(?:[-*]\s+|\d+\.\s+)", "", sentence).strip()
+
+        # 잘린 markdown 조각은 오탐이 많으므로 버린다.
+        if sentence.count("`") % 2 == 1:
+            return None
+
+        plain = re.sub(r"[`\W_]+", "", sentence, flags=re.UNICODE)
+        if len(plain) < 6:
+            return None
+
+        return sentence
 
 
 # ── 액션 분류기 ───────────────────────────────────────────────────────────────
@@ -163,6 +188,7 @@ class ActionClassifier:
             "EDIT_NO_TEST":    f"테스트 실행 없이 파일 수정: {target}",
             "HIGH_RISK_FILE":  f"고위험 파일 접근: {target}",
             "DESTRUCTIVE_CMD": f"파괴적 명령 실행: {command[:60]}",
+            "SECURITY_RISK_CMD": f"보안 위협 명령 실행: {command[:60]}",
             "RETRY_SAME_FIX":  f"동일 파일 반복 수정 (3회 이상): {target}",
         }
         return descriptions.get(rule.id, f"{tool} → {target or command}")
