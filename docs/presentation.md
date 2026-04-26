@@ -240,6 +240,27 @@ $ debt repay edc-23daa6 --manual "auth.js 직접 코드 리뷰 완료"
 
 ---
 
+# 실시간 대시보드
+
+에이전트가 작업하는 동안 부채 누적을 실시간으로 모니터링합니다.
+
+```bash
+# 현재 프로젝트의 최신 Claude 세션 모니터링
+$ debt dashboard --type claude
+
+# Codex 세션 ID로 직접 연결
+$ debt dashboard --type codex 019d04f2-a69e-7ea3-a599-4a1ae3b2ec19
+
+# 에이전트 세션에 직접 연결
+$ debt watch-claude --session <session-id>
+$ debt watch-codex  --session <session-id>
+$ debt watch-gemini --session <session-id>
+```
+
+tmux 기반으로 실행되며, 새 부채가 감지될 때마다 화면이 갱신됩니다.
+
+---
+
 # 실시간 Hook 연동
 
 `debt init` 한 번으로 에이전트와 자동 연동됩니다.
@@ -284,13 +305,11 @@ $ debt init
 
 # 한 줄 요약
 
-<br>
-
 > **에이전트가 스스로 모른다고 한 것들을,**
 > **우리가 대신 추적합니다.**
 
-<br>
-
 `debt init` → `debt watch` → `debt judge`
+
+![w:180](qr.png)
 
 **github.com/com-nyang/Epistemic_Debt_Compiler**

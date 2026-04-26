@@ -46,6 +46,7 @@ debt ls
 debt explain <event-id>
 debt repay <event-id> --test "pytest -q"
 debt judge
+debt dashboard
 ```
 
 ### What each command does
@@ -56,6 +57,39 @@ debt judge
 - `debt explain`: show details for a specific debt item
 - `debt repay`: submit evidence and reduce or resolve debt
 - `debt judge`: return the current verdict for whether the agent should proceed
+- `debt dashboard`: launch a real-time tmux monitoring dashboard
+
+### Connecting directly to agent sessions
+
+Instead of passing a file, you can connect directly to a live or recorded agent session by session ID:
+
+```bash
+# Claude Code
+debt watch-claude --session <session-id>
+
+# OpenAI Codex
+debt watch-codex --session <session-id>
+
+# Google Gemini
+debt watch-gemini --session <session-id>
+```
+
+### Real-time dashboard
+
+Monitor debt accumulation live as an agent works:
+
+```bash
+# Latest Claude session in current project
+debt dashboard --type claude
+
+# Specific Codex session
+debt dashboard --type codex <session-id>
+
+# Specific Gemini session
+debt dashboard --type gemini <session-id>
+```
+
+The dashboard runs inside tmux and updates in real time as new debt events are detected.
 
 ## Installation
 
